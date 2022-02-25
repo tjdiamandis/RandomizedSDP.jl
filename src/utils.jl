@@ -97,7 +97,14 @@ function vec_symm(X)
 end
 
 
-function build_A(As::Vector{AbstractMatrix})
+"""
+    build_A(As::Vector{T}) where {T <: AbstractMatrix}
+
+Builds the linear map A s.t. `A * x .== [Tr(A[i]*X) for i in 1:n]`.
+where `x` is the vectorized version of `X` and scaled to preserve inner products
+(see `vec_symm`)
+"""
+function build_A(As::Vector{T}) where {T <: AbstractMatrix}
     m = length(As)
     n_ = size(As[1], 1)
     n = n_ * (n_ + 1) ÷ 2
@@ -107,4 +114,41 @@ function build_A(As::Vector{AbstractMatrix})
         A[i,:] .= vec_symm(Ai)
     end
     return A
+end
+
+
+# Generates dual form:
+#   min c^Tx st ΣF_ix_i + G ∈ PSDCONE()
+#   Build from KKT conditions:
+#       Fx = sum(F[i]*xstar[i] for i in 1:n) + G
+#       all(eigvals(Matrix(Fx)) .>= 0)
+#       all(eigvals(D) .>= 0)
+#       all([0 .== c[i] - tr(F[i]*D) for i in 1:n])
+#       tr(Fx*D) .== 0
+"""
+    generate_random_sdp(n; rand_seed=0)
+
+Generates a random dual form SDP with side dimension `n`:
+`min c'*x s.t. sum(F[i]*x[i]) + G ⪰ 0`
+
+Returns `c, F, G, xstar, D`, where `xstar` and `D` are optimal primal and dual
+variables respectively
+"""
+function generate_random_sdp(n; rand_seed=0)
+    Random.seed!(rand_seed)
+
+    D = diagm(1 .+ rand(n))
+    F = Vector{SparseMatrixCSC{Float64, Int}}(undef, n)
+    c = Vector{Float64}(undef, n)
+    for i in 1:n
+        F[i] = spzeros(n, n)
+        block_size = randn() < 1.5 ? 2 : 10
+        F[i][i:min(i+block_size,n), i:min(i+block_size,n)] .= 1
+        c[i] = tr(D*F[i])
+    end
+    xstar = rand(n)
+    Fx = sum(F[i]*xstar[i] for i in 1:n)
+    G = -Fx
+
+    return c, F, G, xstar, D
 end
