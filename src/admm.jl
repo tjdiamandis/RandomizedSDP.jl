@@ -21,8 +21,6 @@ mutable struct SDP{T}
     xk::Vector{T}       # primal var
     zk::Vector{T}       # primal var
     uk::Vector{T}       # dual var
-    rp::Vector{T}       # primal residual
-    rd::Vector{T}       # dual residual
     ρ::T                # ADMM param 
     α::T                # over-relaxation param
     cache
@@ -35,8 +33,6 @@ mutable struct SDP{T}
             zeros(T, size(c)),
             zeros(T, size(c)),
             zeros(T, size(c)),
-            fill(Inf, size(b)),
-            fill(Inf, size(c)),
             T(ρ),
             T(α)
         )
@@ -95,9 +91,9 @@ function update_rho!(sdp::SDP, rp, rd, μ, τ_inc, τ_dec)
     end
 end
 
-function converged(sdp::SDP, eps_abs, eps_rel)
-    primal = norm(sdp.rp) ≤ sqrt(sdp.data.m) * eps_abs + eps_rel * max(norm(sdp.xk), norm(sdp.uk), norm(sdp.data.c))
-    dual = norm(sdp.rd) ≤ sqrt(sdp.data.n) * eps_abs + sdp.ρ * norm(sdp.uk) * eps_rel
+function converged(sdp::SDP, rp, rd, eps_abs, eps_rel)
+    primal = rp ≤ sqrt(sdp.data.m) * eps_abs + eps_rel * max(norm(sdp.xk), norm(sdp.uk), norm(sdp.data.c))
+    dual = rd ≤ sqrt(sdp.data.n) * eps_abs + sdp.ρ * norm(sdp.uk) * eps_rel
     return primal && dual
 end
 
@@ -126,6 +122,7 @@ function solve!(
     τ_dec = 2
     ρ = sdp.ρ
     α = sdp.α
+    rp, rd = Inf, Inf
 
     # --- enable multithreaded BLAS ---
     BLAS.set_num_threads(Sys.CPU_THREADS)
@@ -157,7 +154,7 @@ function solve!(
     # --------------------- ITERATIONS -----------------------------------------
     # --------------------------------------------------------------------------
     solve_time_start = time_ns()
-    while t <= max_iters && !converged(sdp, eps_abs, eps_rel)
+    while t <= max_iters && !converged(sdp, rp, rd, eps_abs, eps_rel)
         # --- Update Iterates ---
         # TODO: define solver
         update_x!(sdp, nothing, nothing)
