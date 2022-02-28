@@ -24,7 +24,7 @@ mutable struct SDP{T}
     ρ::T                # ADMM param 
     α::T                # over-relaxation param
     cache
-    function SDP(c::Vector{T}, A::Matrix{T}, b::Vector{T}; ρ=1.0, α=1.5) where {T <: Real}
+    function SDP(c::Vector{T}, A::Matrix{T}, b::Vector{T}; ρ=1.0, α=1.6) where {T <: Real}
         m, n = size(A)
         data = ProblemData(c, A, b)
         return new{T}(
@@ -80,21 +80,21 @@ function update_x!(
     return nothing
 end
 
-function update_z!(sdp::SDP; relax=true, xhat=nothing)
-    if relax
-        xhat = sdp.xk
+function update_z!(sdp::SDP; relax=true, x_relax=nothing)
+    if !relax
+        x_relax = sdp.xk
     end
-    d, V = eigen(unvec_symm(xhat + sdp.uk), sortby=x->-x)
+    d, V = eigen(unvec_symm(x_relax + sdp.uk), sortby=x->-x)
     nn = count(>(0), d)
     sdp.zk .= vec_symm(V[:, 1:nn] * Diagonal(d[1:nn]) * V[:, 1:nn]')
     return nothing
 end
 
-function update_u!(sdp::SDP{T}; relax=true, xhat=nothing) where {T <: Real}
-    if relax
-        xhat = sdp.xk
+function update_u!(sdp::SDP{T}; relax=true, x_relax=nothing) where {T <: Real}
+    if !relax
+        x_relax = sdp.xk
     end
-    @. sdp.uk += xhat - sdp.zk
+    @. sdp.uk += x_relax - sdp.zk
     return nothing
 end
 
@@ -114,6 +114,16 @@ function converged(sdp::SDP, rp, rd, eps_abs, eps_rel)
     primal = rp ≤ sqrt(sdp.data.m) * eps_abs + eps_rel * max(norm(sdp.xk), norm(sdp.uk), norm(sdp.data.c))
     dual = rd ≤ sqrt(sdp.data.n) * eps_abs + sdp.ρ * norm(sdp.uk) * eps_rel
     return primal && dual
+end
+
+function init_cache(sdp::SDP)
+    cache = (
+        uk_old = zeros(size(sdp.uk)),
+        d = zeros(size(sdp.xk)),
+        x_lhs = zeros(size(sdp.data.b)),
+        ν = zeros(size(sdp.data.b)),
+    )
+    return cache
 end
 
 function solve!(
@@ -142,27 +152,25 @@ function solve!(
     ρ = sdp.ρ
     α = sdp.α
     rp, rd = Inf, Inf
-    r0 = 110
+    r0 = m ≥ 200 ? 110 : m ÷ 10
 
     # --- enable multithreaded BLAS ---
     BLAS.set_num_threads(Sys.CPU_THREADS)
 
     # --- allocate memory ---
     if relax
-        xhat = copy(sdp.xk)
+        x_relax = copy(sdp.xk)
+    else
+        x_relax = nothing
     end
     if isnothing(cache)
-        cache = (
-            uk_old = zeros(size(sdp.uk)),
-            d = zeros(size(sdp.xk)),
-            x_lhs = zeros(size(sdp.data.b)),
-            ν = zeros(size(sdp.data.b)),
-        )
+        cache = init_cache(sdp)
     end
 
     # --- Setup Linear System Solver ---
     AAT_factorization, solver = nothing, nothing
     P = I
+    precond_time = 0.0
     if indirect
         solver = CgSolver(m, m, typeof(sdp.xk))
         if precondition
@@ -203,15 +211,15 @@ function solve!(
     # --------------------------------------------------------------------------
     solve_time_start = time_ns()
     while t <= max_iters && !converged(sdp, rp, rd, eps_abs, eps_rel)
+        
         # --- Update Iterates ---
-        # TODO: define solver
         update_x!(sdp, AAT_factorization, indirect, solver, P, cache)
         if relax
-            @. xhat = α * sdp.xk + (1-α) * sdp.zk
+            @. x_relax = α * sdp.xk + (1-α) * sdp.zk
         end
-        update_z!(sdp; relax=relax, xhat=xhat)
+        update_z!(sdp; relax=relax, x_relax=x_relax)
         cache.uk_old .= sdp.uk
-        update_u!(sdp; relax=relax, xhat=xhat)
+        update_u!(sdp; relax=relax, x_relax=x_relax)
 
         # --- Update ρ ---
         rp = norm(sdp.xk - sdp.zk)
