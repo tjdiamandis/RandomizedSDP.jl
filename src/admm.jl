@@ -40,6 +40,7 @@ mutable struct SDP{T}
 end
 
 struct Log{T}
+    obj_val::Union{AbstractVector{T}, Nothing}
     iter_time::Union{AbstractVector{T}, Nothing}
     rp::Union{AbstractVector{T}, Nothing}
     rd::Union{AbstractVector{T}, Nothing}
@@ -177,9 +178,18 @@ function solve!(
         AAT_factorization = cholesky(sdp.data.AAT)
     end
 
-
     # --- setup log ---
-    # TODO: 
+    if logging
+        obj_val_log = zeros(max_iters)
+        iter_time_log = zeros(max_iters)
+        rp_log = zeros(max_iters)
+        rd_log = zeros(max_iters)
+    else
+        obj_val_log = nothing
+        iter_time_log = nothing
+        rp_log = nothing
+        rd_log = nothing
+    end
 
     setup_time = (time_ns() - setup_time_start) / 1e9
     @printf("\nSetup in %6.3fs\n", setup_time)
@@ -205,8 +215,8 @@ function solve!(
 
         # --- Update ρ ---
         rp = norm(sdp.xk - sdp.zk)
-        rd = norm(ρ*(sdp.uk - cache.uk_old))
-        ρ = update_rho!(sdp, rp, rd, μ, τ_inc, τ_dec)
+        rd = norm(sdp.ρ*(sdp.uk - cache.uk_old))
+        update_rho!(sdp, rp, rd, μ, τ_inc, τ_dec)
 
         # --- Update objective --
         sdp.obj_val = dot(sdp.data.c, sdp.xk)
@@ -214,7 +224,10 @@ function solve!(
         # --- Logging ---
         time_sec = (time_ns() - solve_time_start) / 1e9
         if logging
-            #TODO:
+            obj_val_log[t] = sdp.obj_val
+            iter_time_log[t] = time_sec
+            rp_log[t] = rp
+            rd_log[t] = rd
         end
 
         # --- Printing ---
@@ -222,8 +235,8 @@ function solve!(
             print_iter_func((
                 string(t),
                 sdp.obj_val,
-                sum(x->x^2, rp),
-                sum(x->x^2, rd),
+                rp,
+                rd,
                 sdp.ρ,
                 time_sec
             ))
@@ -231,4 +244,49 @@ function solve!(
 
         t += 1
     end
+
+    # print final iteration if havent done so
+    if (t-1) % print_iter != 0 && (t-1) != 1
+        rp = norm(sdp.xk - sdp.zk)
+        rd = norm(sdp.ρ*(sdp.uk - cache.uk_old))
+        print_iter_func((
+            string(t-1),
+            sdp.obj_val,
+            rp,
+            rd,
+            sdp.ρ,
+            (time_ns() - solve_time_start) / 1e9
+        ))
+    end
+    solve_time = (time_ns() - solve_time_start) / 1e9
+    @printf("\nSolved in %6.3fs, %d iterations\n", solve_time, t-1)
+    @printf("Total time: %6.3fs\n", setup_time + solve_time)
+    print_footer()
+    
+    
+    # --- Construct Logs ---
+    if logging
+        log = Log(
+            obj_val_log[1:t-1], 
+            iter_time_log[1:t-1],
+            rp_log[1:t-1], 
+            rd_log[1:t-1],
+            setup_time, precond_time, solve_time
+        )
+    else
+        log = Log(
+            nothing, nothing, nothing, nothing,
+            setup_time, precond_time, solve_time
+        )
+    end
+
+
+    # --- Construct Solution ---
+    res = Result(
+        sdp.obj_val,
+        sdp.xk,
+        log
+    )
+
+    return res
 end
