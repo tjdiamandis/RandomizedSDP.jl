@@ -68,6 +68,7 @@ function update_x!(
     
     if indirect
         cg!(solver, sdp.data.AAT, cache.x_lhs; M=P)
+        !issolved(solver) && error("CG failed")
         mul!(cache.d, sdp.data.A', solver.x, -1.0, 1.0)
     else
         ldiv!(cache.ν, AAT_factorization, cache.x_lhs)
@@ -140,6 +141,7 @@ function solve!(
     ρ = sdp.ρ
     α = sdp.α
     rp, rd = Inf, Inf
+    r0 = 110
 
     # --- enable multithreaded BLAS ---
     BLAS.set_num_threads(Sys.CPU_THREADS)
@@ -163,7 +165,13 @@ function solve!(
     if indirect
         solver = CgSolver(m, m, typeof(sdp.xk))
         if precondition
-            # TODO:
+            @printf("\n\tPreconditioning...")
+            precond_time_start = time_ns()
+            AAT_nys = RP.adaptive_sketch(sdp.data.AAT, r0, RP.NystromSketch; q_norm=20, tol=eps()*m^2)
+            P = RP.NystromPreconditionerInverse(AAT_nys, ρ)
+            precond_time = (time_ns() - precond_time_start) / 1e9
+            r = length(AAT_nys.Λ.diag)
+            @printf("\n\tPreconditioned (rank %d) in %6.3fs", r, precond_time)
         end
     else
         AAT_factorization = cholesky(sdp.data.AAT)
