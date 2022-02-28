@@ -54,10 +54,27 @@ struct Result{T}
     log::Log{T}
 end
 
-function update_x!(sdp::SDP, solver::S, P) where {T <: Real, S <: Union{CgSolver, Nothing}}
-    d = -sdp.data.c + sdp.ρ * (sdp.zk - sdp.uk)
-    ν = sdp.data.AAT \ (sdp.data.A*d - sdp.ρ*sdp.data.b)
-    sdp.xk .= d .- sdp.data.A'*ν
+function update_x!(
+    sdp::SDP,
+    AAT_factorization::F,
+    indirect::Bool, 
+    solver::S, 
+    P, 
+    cache
+) where {S <: Union{CgSolver, Nothing}, F <: Union{Nothing, Cholesky}}
+    @. cache.d = -sdp.data.c + sdp.ρ * (sdp.zk - sdp.uk)
+    mul!(cache.x_lhs, sdp.data.A, cache.d)
+    @. cache.x_lhs -= sdp.ρ * sdp.data.b
+    
+    if indirect
+        cg!(solver, sdp.data.AAT, cache.x_lhs; M=P)
+        mul!(cache.d, sdp.data.A', solver.x, -1.0, 1.0)
+    else
+        ldiv!(cache.ν, AAT_factorization, cache.x_lhs)
+        mul!(cache.d, sdp.data.A', cache.ν, -1.0, 1.0)
+    end
+
+    sdp.xk .= cache.d
     return nothing
 end
 
@@ -102,7 +119,7 @@ function solve!(
     relax::Bool=true,
     logging::Bool=false,
     indirect::Bool=false,
-    precond::Bool=false,
+    precondition::Bool=false,
     eps_abs=1e-5,
     eps_rel=1e-3,
     eps_inf=1e-8,
@@ -134,11 +151,24 @@ function solve!(
     if isnothing(cache)
         cache = (
             uk_old = zeros(size(sdp.uk)),
+            d = zeros(size(sdp.xk)),
+            x_lhs = zeros(size(sdp.data.b)),
+            ν = zeros(size(sdp.data.b)),
         )
     end
 
-    # --- Precondition ---
-    # TODO:
+    # --- Setup Linear System Solver ---
+    AAT_factorization, solver = nothing, nothing
+    P = I
+    if indirect
+        solver = CgSolver(m, m, typeof(sdp.xk))
+        if precondition
+            # TODO:
+        end
+    else
+        AAT_factorization = cholesky(sdp.data.AAT)
+    end
+
 
     # --- setup log ---
     # TODO: 
@@ -157,7 +187,7 @@ function solve!(
     while t <= max_iters && !converged(sdp, rp, rd, eps_abs, eps_rel)
         # --- Update Iterates ---
         # TODO: define solver
-        update_x!(sdp, nothing, nothing)
+        update_x!(sdp, AAT_factorization, indirect, solver, P, cache)
         if relax
             @. xhat = α * sdp.xk + (1-α) * sdp.zk
         end
