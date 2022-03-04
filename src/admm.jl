@@ -137,10 +137,11 @@ function solve!(
     eps_inf=1e-8,
     max_iters::Int=100,
     print_iter::Int=25,
+    verbose=true,
     cache=nothing
 ) where {T <: Real}
     setup_time_start = time_ns()
-    @printf("Starting setup...")
+    verbose && @printf("Starting setup...")
 
     # --- parameters ---
     n = sdp.data.n
@@ -174,13 +175,13 @@ function solve!(
     if indirect
         solver = CgSolver(m, m, typeof(sdp.xk))
         if precondition
-            @printf("\n\tPreconditioning...")
+            verbose && @printf("\n\tPreconditioning...")
             precond_time_start = time_ns()
             AAT_nys = RP.adaptive_sketch(sdp.data.AAT, r0, RP.NystromSketch; q_norm=20, tol=eps()*m^2)
             P = RP.NystromPreconditionerInverse(AAT_nys, ρ)
             precond_time = (time_ns() - precond_time_start) / 1e9
             r = length(AAT_nys.Λ.diag)
-            @printf("\n\tPreconditioned (rank %d) in %6.3fs", r, precond_time)
+            verbose && @printf("\n\tPreconditioned (rank %d) in %6.3fs", r, precond_time)
         end
     else
         AAT_factorization = cholesky(sdp.data.AAT)
@@ -200,11 +201,11 @@ function solve!(
     end
 
     setup_time = (time_ns() - setup_time_start) / 1e9
-    @printf("\nSetup in %6.3fs\n", setup_time)
+    verbose && @printf("\nSetup in %6.3fs\n", setup_time)
 
     # --- Print Headers ---
     headers = ["Iteration", "Objective", "Primal Res", "Dual Res", "ρ", "Time"]
-    print_header(headers)
+    verbose && print_header(headers)
     
     # --------------------------------------------------------------------------
     # --------------------- ITERATIONS -----------------------------------------
@@ -239,7 +240,7 @@ function solve!(
         end
 
         # --- Printing ---
-        if t == 1 || t % print_iter == 0
+        if verbose && (t == 1 || t % print_iter == 0)
             print_iter_func((
                 string(t),
                 sdp.obj_val,
@@ -254,7 +255,7 @@ function solve!(
     end
 
     # print final iteration if havent done so
-    if (t-1) % print_iter != 0 && (t-1) != 1
+    if verbose && (t-1) % print_iter != 0 && (t-1) != 1
         rp = norm(sdp.xk - sdp.zk)
         rd = norm(sdp.ρ*(sdp.uk - cache.uk_old))
         print_iter_func((
@@ -267,9 +268,9 @@ function solve!(
         ))
     end
     solve_time = (time_ns() - solve_time_start) / 1e9
-    @printf("\nSolved in %6.3fs, %d iterations\n", solve_time, t-1)
-    @printf("Total time: %6.3fs\n", setup_time + solve_time)
-    print_footer()
+    verbose && @printf("\nSolved in %6.3fs, %d iterations\n", solve_time, t-1)
+    verbose && @printf("Total time: %6.3fs\n", setup_time + solve_time)
+    verbose && print_footer()
     
     
     # --- Construct Logs ---
