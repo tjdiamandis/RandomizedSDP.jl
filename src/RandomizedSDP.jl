@@ -9,6 +9,7 @@ using RandomizedPreconditioners
 const RP = RandomizedPreconditioners
 
 include("utils.jl")
+include("projection.jl")
 include("admm.jl")
 
 end

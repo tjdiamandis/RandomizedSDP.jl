@@ -80,13 +80,19 @@ function update_x!(
     return nothing
 end
 
-function update_z!(sdp::SDP; relax=true, x_relax=nothing)
+function update_z!(sdp::SDP; relax=true, x_relax=nothing, rand_proj=true)
     if !relax
         x_relax = sdp.xk
     end
-    d, V = eigen(unvec_symm(x_relax + sdp.uk), sortby=x->-x)
-    nn = count(>(0), d)
-    sdp.zk .= vec_symm(V[:, 1:nn] * Diagonal(d[1:nn]) * V[:, 1:nn]')
+    if rand_proj
+        r = round(Int, 0.1 * sdp.data.n)
+        q = 5
+        sdp.zk .= vec_symm(rand_project_psd_cone(unvec_symm(x_relax + sdp.uk), r; q=q))
+    else
+        d, V = eigen(unvec_symm(x_relax + sdp.uk), sortby=x->-x)
+        nn = count(>(0), d)
+        sdp.zk .= vec_symm(V[:, 1:nn] * Diagonal(d[1:nn]) * V[:, 1:nn]')
+    end
     return nothing
 end
 
@@ -132,13 +138,14 @@ function solve!(
     logging::Bool=false,
     indirect::Bool=false,
     precondition::Bool=false,
+    rand_proj::Bool=true,
     eps_abs=1e-5,
     eps_rel=1e-3,
     eps_inf=1e-8,
     max_iters::Int=100,
     print_iter::Int=25,
     verbose=true,
-    cache=nothing
+    cache=nothing,
 ) where {T <: Real}
     setup_time_start = time_ns()
     verbose && @printf("Starting setup...")
@@ -218,7 +225,7 @@ function solve!(
         if relax
             @. x_relax = α * sdp.xk + (1-α) * sdp.zk
         end
-        update_z!(sdp; relax=relax, x_relax=x_relax)
+        update_z!(sdp; relax=relax, x_relax=x_relax, rand_proj=rand_proj)
         cache.uk_old .= sdp.uk
         update_u!(sdp; relax=relax, x_relax=x_relax)
 
